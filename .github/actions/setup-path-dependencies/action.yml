@@ -1,0 +1,23 @@
+name: Set up path dependencies
+description: Check out the Rust workspace path dependencies for mux-core
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        repository: Sn0wo2/h2mux-rs
+        ref: 9a500a239932af48ecf3d82c2969edea85959ffb
+        path: workspace/h2mux-rs
+        persist-credentials: false
+    - uses: actions/checkout@v7
+      with:
+        repository: Sn0wo2/mux-cool-rs
+        ref: d4af65efc8e8a99ef351b1e46aa6023cef039e99
+        path: workspace/mux-cool-rs
+        persist-credentials: false
+    - uses: actions/checkout@v7
+      with:
+        repository: Sn0wo2/socksaddr
+        ref: 265e7149b07e3f7640d346ed8edbf2b1f4eec446
+        path: workspace/socksaddr
+        persist-credentials: false

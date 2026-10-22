@@ -1,0 +1,28 @@
+name: Rust CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Run lint checks
+    uses: ./.github/workflows/lint.yml
+
+  build:
+    name: Build artifacts
+    uses: ./.github/workflows/build.yml
+
+  test:
+    name: Run tests
+    uses: ./.github/workflows/test.yml
