@@ -6,18 +6,18 @@ runs:
     - uses: actions/checkout@v7
       with:
         repository: Sn0wo2/h2mux-rs
-        ref: 9a500a239932af48ecf3d82c2969edea85959ffb
+        ref: a8e6e6a9dc30232a894a3bf09be31260c4c4b847
         path: workspace/h2mux-rs
         persist-credentials: false
     - uses: actions/checkout@v7
       with:
         repository: Sn0wo2/mux-cool-rs
-        ref: d4af65efc8e8a99ef351b1e46aa6023cef039e99
+        ref: d13179d08ccee42457c0fef79a424896351b982e
         path: workspace/mux-cool-rs
         persist-credentials: false
     - uses: actions/checkout@v7
       with:
         repository: Sn0wo2/socksaddr
-        ref: 265e7149b07e3f7640d346ed8edbf2b1f4eec446
+        ref: c1fe01566d842937a2776731d649bc0ccc87d648
         path: workspace/socksaddr
         persist-credentials: false
