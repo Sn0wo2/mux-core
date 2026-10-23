@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "h2mux-rs"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -251,14 +251,14 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mux-cool-rs"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "socksaddr",
 ]
 
 [[package]]
 name = "mux-core"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "async_smux",
  "futures-util",
@@ -385,7 +385,9 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "socksaddr"
-version = "0.0.0"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86e7db52af5ece6472ef442195478265655488f65a0a0b7e7bd0ff23592af08d"
 
 [[package]]
 name = "static_assertions"

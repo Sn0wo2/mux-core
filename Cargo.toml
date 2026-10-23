@@ -2,18 +2,17 @@
 name = "mux-core"
 description = "Transport-independent multiplexed session middleware"
 readme = "README.md"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Sn0wo2/mux-core"
-publish = false
 
 [dependencies]
 async_smux = "0.4.0"
 futures-util = "0.3"
-h2mux-rs = { path = "../h2mux-rs" }
-mux-cool-rs = { path = "../mux-cool-rs" }
-socksaddr = { path = "../socksaddr" }
+h2mux-rs = { version = "0.0.1", path = "../h2mux-rs" }
+mux-cool-rs = { version = "0.0.1", path = "../mux-cool-rs" }
+socksaddr = "0.0.4"
 tokio = { version = "1", features = ["io-util", "sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tracing = "0.1"
