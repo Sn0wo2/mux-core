@@ -1,97 +1,50 @@
-name: Rust Release
+name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.1.1)"
+        description: Version to release (e.g. 0.1.1)
         required: true
         type: string
       snapshot:
-        description: "Snapshot mode (no bump, no tag, no publish)"
+        description: Build a snapshot without bumping, tagging, or publishing
         type: boolean
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.event.repository.default_branch }}
+  group: release-${{ inputs.snapshot && format('snapshot-{0}', github.ref) || 'publish' }}
+  cancel-in-progress: ${{ inputs.snapshot == true }}
 
 env:
   CARGO_TERM_COLOR: always
-  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-
-defaults:
-  run:
-    working-directory: workspace/mux-core
 
 jobs:
-  check-release:
-    name: Check published release
+  prepare:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      checks: read
+    defaults:
+      run:
+        working-directory: workspace/mux-core
     outputs:
-      skip: ${{ steps.check.outputs.skip }}
-    steps:
-      - name: Checkout
-        if: ${{ !inputs.snapshot }}
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          path: workspace/mux-core
-
-      - name: Check published release
-        id: check
-        if: ${{ !inputs.snapshot }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
-        run: node scripts/check-release.js "v${RELEASE_VERSION#v}"
-
-  prepare:
-    name: Prepare release
-    needs: check-release
-    if: ${{ needs.check-release.outputs.skip != 'true' || inputs.snapshot }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
+      skip: ${{ steps.release.outputs.skip }}
       version: ${{ steps.version.outputs.version }}
-      sha: ${{ steps.sha.outputs.sha }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      sha: ${{ steps.metadata.outputs.sha }}
+      retry: ${{ steps.tag.outputs.retry }}
       has_publishable_crates: ${{ steps.metadata.outputs.has_publishable_crates }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           ref: ${{ (github.event_name == 'push' || inputs.snapshot) && github.ref || github.event.repository.default_branch }}
           fetch-depth: 0
           path: workspace/mux-core
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: workspace/mux-core -> target
-          shared-key: ${{ github.event.repository.name }}-cargo
-          cache-on-failure: true
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-edit,cargo-deny
-
-      - name: Update manual release base
-        if: &manual-release github.event_name == 'workflow_dispatch' && !inputs.snapshot
-        run: |
-          git fetch origin "$DEFAULT_BRANCH"
-          git checkout --detach FETCH_HEAD
+          persist-credentials: false
 
       - name: Normalize version
         id: version
@@ -105,202 +58,226 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          [[ ${version%%+*} != *-* ]] || echo "prerelease=true" >> "$GITHUB_OUTPUT"
 
-      - name: Check existing release tag
+      - name: Check for an already published release
+        id: release
+        if: ${{ !inputs.snapshot }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-release.js "v$VERSION"
+
+      - name: Resume an existing release tag
         id: tag
-        if: *manual-release
+        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.release.outputs.skip != 'true'
         run: |
-          if git ls-remote --exit-code --refs origin "refs/tags/v$VERSION" >/dev/null; then
+          if git show-ref --verify --quiet "refs/tags/v$VERSION"; then
+            git checkout --detach "v$VERSION"
             echo "retry=true" >> "$GITHUB_OUTPUT"
-          else
-            status=$?
-            [[ $status == 2 ]] || exit "$status"
-            echo "retry=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Resume existing release tag
-        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.tag.outputs.retry == 'true'
+      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
+        if: steps.release.outputs.skip != 'true'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.release.outputs.skip != 'true'
+        with:
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.release.outputs.skip != 'true'
+        with:
+          workspaces: workspace/mux-core -> target
+          shared-key: check
+          cache-workspace-crates: true
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - uses: taiki-e/install-action@v2
+        if: ${{ !inputs.snapshot && steps.release.outputs.skip != 'true' }}
+        with:
+          tool: cargo-edit
+
+      - name: Sync package version
+        id: sync
+        if: ${{ !inputs.snapshot && steps.release.outputs.skip != 'true' }}
         run: |
-          git fetch origin "refs/tags/v$VERSION"
-          git checkout --detach FETCH_HEAD
+          cargo set-version --workspace "$VERSION"
+          if ! git diff --quiet -- '*Cargo.toml' Cargo.lock; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Bump version
-        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.tag.outputs.retry != 'true'
-        run: cargo set-version --workspace "$VERSION"
-
-      - name: Verify workspace versions and publishable crates
+      - uses: actions/github-script@v9
         id: metadata
-        uses: actions/github-script@v9
+        if: steps.release.outputs.skip != 'true'
         env:
           VERIFY_VERSION: ${{ !inputs.snapshot }}
         with:
           script: |
             process.chdir(`${process.env.GITHUB_WORKSPACE}/workspace/mux-core`)
-            const { packages, workspace_default_members } = JSON.parse(
+            const { packages } = JSON.parse(
               (await exec.getExecOutput("cargo", ["metadata", "--no-deps", "--format-version", "1"], { silent: true })).stdout,
             )
             const publishable = packages.filter((pkg) => pkg.publish == null || pkg.publish.includes("crates-io"))
             if (process.env.VERIFY_VERSION === "true") {
-              const mismatches = packages.filter((pkg) => {
-                const released = publishable.includes(pkg) ||
-                  (workspace_default_members.includes(pkg.id) && pkg.targets.some((target) => target.kind.includes("bin")))
-                return pkg.version !== process.env.VERSION && released
-              })
-              if (mismatches.length) {
-                throw new Error(`Expected released packages to have version ${process.env.VERSION}:\n${mismatches.map((pkg) => `  ${pkg.name} ${pkg.version}`).join("\n")}`)
-              }
+              const mismatches = publishable.filter((pkg) => pkg.version !== process.env.VERSION)
+              if (mismatches.length) throw new Error(`Expected released packages to have version ${process.env.VERSION}`)
             }
-            if (context.eventName === "push" && context.sha !==
-                (await exec.getExecOutput("git", ["rev-parse", "HEAD"], { silent: true })).stdout.trim()) {
-              throw new Error("Checked out commit does not match the pushed tag commit")
-            }
+            const sha = (await exec.getExecOutput("git", ["rev-parse", "HEAD"], { silent: true })).stdout.trim()
+            if (context.eventName === "push" && sha !== context.sha) throw new Error("Checkout does not match the pushed tag")
             core.setOutput("has_publishable_crates", publishable.length > 0)
+            core.setOutput("sha", sha)
 
-      - name: Run gated checks
-        run: make ci
+      - name: Reuse CI checks for this commit
+        if: github.event_name == 'push' && steps.release.outputs.skip != 'true' && steps.sync.outputs.changed != 'true'
+        timeout-minutes: 15
+        uses: lewagon/wait-on-check-action@v1.9.1
+        with:
+          ref: ${{ steps.metadata.outputs.sha }}
+          check-name: Checks
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          allowed-conclusions: success
 
-      - name: Commit version bump
-        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.tag.outputs.retry != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "chore(release): bump version to $VERSION"
+      - name: Check the release candidate
+        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
+        run: make lint check check-no-default test test-all test-no-default doc
 
-      - name: Push version commit and tag
-        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.tag.outputs.retry != 'true'
-        run: |
-          git tag "v$VERSION"
-          git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "HEAD:refs/tags/v$VERSION"
+      - uses: taiki-e/install-action@v2
+        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
+        with:
+          tool: cargo-deny
 
-      - name: Record release commit
-        id: sha
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Check release candidate dependencies
+        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
+        run: cargo deny check
 
-  build:
-    name: Build source archive
+      - name: Save the checked version changes
+        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.release.outputs.skip != 'true' && steps.tag.outputs.retry != 'true'
+        run: git diff --binary -- '*Cargo.toml' Cargo.lock > "$RUNNER_TEMP/version.patch"
+
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch' && !inputs.snapshot && steps.release.outputs.skip != 'true' && steps.tag.outputs.retry != 'true'
+        with:
+          name: version-changes
+          path: ${{ runner.temp }}/version.patch
+          retention-days: 1
+          if-no-files-found: error
+
+  tag:
     needs: prepare
-    uses: ./.github/workflows/build.yml
-    with:
-      ref: ${{ needs.prepare.outputs.sha }}
-      version: ${{ needs.prepare.outputs.version }}
-      snapshot: ${{ inputs.snapshot == true }}
-
-  publish:
-    name: Publish release
+    if: >-
+      github.event_name == 'workflow_dispatch' && !inputs.snapshot &&
+      needs.prepare.outputs.skip != 'true' && needs.prepare.outputs.retry != 'true'
     runs-on: ubuntu-latest
-    if: ${{ !inputs.snapshot }}
-    needs: [prepare, build]
     permissions:
       contents: write
+    defaults:
+      run:
+        working-directory: workspace/mux-core
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-          fetch-depth: 0
           path: workspace/mux-core
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: version-changes
+          path: ${{ runner.temp }}/version-changes
+
+      - run: git apply --allow-empty --include='*Cargo.toml' --include=Cargo.lock "$RUNNER_TEMP/version-changes/version.patch"
+
+      - name: Commit and tag the checked version
+        id: commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git diff --cached --quiet || git commit -m "chore(release): bump version to $VERSION"
+          git tag "v$VERSION"
+          git -c credential.helper='!gh auth git-credential' push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/v$VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  crates:
+    needs: [prepare, tag]
+    if: >-
+      !cancelled() && !inputs.snapshot && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.skip != 'true' && needs.prepare.outputs.has_publishable_crates == 'true' &&
+      (needs.tag.result == 'success' || needs.tag.result == 'skipped') &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: workspace/mux-core
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha || needs.prepare.outputs.sha }}
+          path: workspace/mux-core
+          persist-credentials: false
 
       - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
 
-      - name: Set up Rust
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-edit
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
-        uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workspace/mux-core -> target
+          shared-key: check
+          cache-workspace-crates: true
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - uses: taiki-e/install-action@v2
         with:
           tool: cargo-edit
 
-      - name: Sync workspace version
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
+      - name: Sync package version
         run: cargo set-version --workspace "$VERSION"
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
+      - uses: katyo/publish-crates@v2
         with:
-          pattern: ${{ github.event.repository.name }}-*-builds
-          merge-multiple: true
-          path: workspace/mux-core/dist
-
-      - name: Generate checksums
-        working-directory: dist
-        run: |
-          shopt -s nullglob
-          files=(*.tar.gz *.zip)
-          if ((${#files[@]})); then sha256sum -- "${files[@]}" > checksums.txt; fi
-
-      - name: Verify crates.io credentials
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: ': "${CARGO_REGISTRY_TOKEN:?CARGO_REGISTRY_TOKEN is not set}"'
-
-      - name: Publish to crates.io
-        if: ${{ needs.prepare.outputs.has_publishable_crates == 'true' }}
-        uses: katyo/publish-crates@v2
-        with:
+          path: workspace/mux-core
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           args: --allow-dirty
 
-      - name: Publish GitHub release
-        uses: actions/github-script@v9
+  publish:
+    needs: [prepare, tag, crates]
+    if: >-
+      !cancelled() && !inputs.snapshot && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.skip != 'true' &&
+      (needs.tag.result == 'success' || needs.tag.result == 'skipped') &&
+      (needs.crates.result == 'success' || needs.crates.result == 'skipped') &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v3
+        id: release
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          draft: true
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+
+      - uses: actions/github-script@v9
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.id }}
         with:
           script: |
-            process.chdir(`${process.env.GITHUB_WORKSPACE}/workspace/mux-core`)
-            const tag = `v${process.env.VERSION}`
-            const prerelease = process.env.VERSION.split("+", 1)[0].includes("-")
-            await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` })
-
-            let release
-            try {
-              release = (await github.rest.repos.getReleaseByTag({ ...context.repo, tag })).data
-            } catch (error) {
-              if (error.status !== 404) throw error
-              release = (await github.rest.repos.createRelease({
-                ...context.repo,
-                tag_name: tag,
-                name: tag,
-                draft: true,
-                prerelease,
-                generate_release_notes: true,
-              })).data
-            }
-            if (!release.draft) throw new Error(`Release ${tag} is already published; refusing to modify it`)
-
-            const files = await (await glob.create("dist/*.tar.gz\ndist/*.zip\ndist/checksums.txt", { matchDirectories: false })).glob()
-            if (!files.length) throw new Error("No release artifacts found")
-
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              ...context.repo,
-              release_id: release.id,
-            })
-            for (const asset of assets) {
-              await github.rest.repos.deleteReleaseAsset({ ...context.repo, asset_id: asset.id })
-            }
-
-            const { readFile, stat } = require("node:fs/promises")
-            const { basename } = require("node:path")
-            for (const file of files) {
-              const name = basename(file)
-              const contentType = name.endsWith(".zip") ? "application/zip" : name.endsWith(".tar.gz") ? "application/gzip" : "text/plain"
-              await github.rest.repos.uploadReleaseAsset({
-                ...context.repo,
-                release_id: release.id,
-                name,
-                data: await readFile(file),
-                headers: { "content-type": contentType, "content-length": (await stat(file)).size },
-              })
-            }
-
             await github.rest.repos.updateRelease({
               ...context.repo,
-              release_id: release.id,
-              name: tag,
-              prerelease,
+              release_id: Number(process.env.RELEASE_ID),
               draft: false,
             })

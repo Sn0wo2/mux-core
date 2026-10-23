@@ -7,10 +7,3 @@ mutants.out*/
 rustc-ice-*.txt
 .idea/
 .vscode/
-.codegraph/
-.omo/
-.sisyphus/
-.claude/
-node_modules/
-.env*
-nul

@@ -1,4 +1,4 @@
-name: Rust CI
+name: CI
 
 on:
   push:
@@ -6,26 +6,154 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Run lint checks
-    uses: ./.github/workflows/lint.yml
+  check:
+    name: Checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/mux-core
+    permissions:
+      contents: read
+    outputs:
+      autofix: ${{ steps.patch.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: workspace/mux-core
+          persist-credentials: false
+
+      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workspace/mux-core -> target
+          shared-key: check
+          cache-workspace-crates: true
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Apply lint fixes
+        continue-on-error: true
+        run: make lint-fix
+
+      - name: Save lint fixes
+        id: patch
+        if: ${{ !cancelled() }}
+        run: |
+          if ! git diff --quiet -- '*.rs'; then
+            git diff --binary -- '*.rs' > "$RUNNER_TEMP/lint-fixes.patch"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git restore --worktree -- '*.rs'
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.patch.outputs.changed == 'true' }}
+        with:
+          name: lint-fixes
+          path: ${{ runner.temp }}/lint-fixes.patch
+          retention-days: 7
+          if-no-files-found: error
+
+      - run: make lint check check-no-default test test-all test-no-default doc
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - run: cargo deny check
+
+  autofix:
+    needs: check
+    if: >-
+      !cancelled() && needs.check.outputs.autofix == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/mux-core
     permissions:
       contents: write
       pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          path: workspace/mux-core
+          persist-credentials: false
 
-  build:
-    name: Build library
-    needs: [lint, test]
-    uses: ./.github/workflows/build.yml
+      - uses: actions/download-artifact@v8
+        with:
+          name: lint-fixes
+          path: ${{ runner.temp }}/lint-fixes
 
-  test:
-    name: Run tests
-    uses: ./.github/workflows/test.yml
+      - run: git apply --include='*.rs' "$RUNNER_TEMP/lint-fixes/lint-fixes.patch"
+
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          path: workspace/mux-core
+          commit-message: "chore(autofix): formatting and lint"
+          branch: auto-fix/rust-${{ github.event.pull_request.number || github.ref_name }}
+          delete-branch: true
+          title: "chore(autofix): formatting and lint"
+          body: "Automated rustfmt and Clippy fixes from CI"
+          labels: automated,rust
+          add-paths: "**/*.rs"
+
+  geiger:
+    name: Unsafe code report
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/mux-core
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: workspace/mux-core
+          persist-credentials: false
+
+      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workspace/mux-core -> target
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-geiger
+
+      - run: cargo +nightly geiger --all-features --output-format GitHubMarkdown >> "$GITHUB_STEP_SUMMARY"
+
+  semver:
+    name: Semantic versioning
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          path: workspace/mux-core
+          persist-credentials: false
+
+      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
+
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: workspace/mux-core/Cargo.toml
