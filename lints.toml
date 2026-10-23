@@ -4,7 +4,6 @@ future_incompatible = { level = "warn", priority = -1 }
 rust_2018_idioms = { level = "warn", priority = -1 }
 rust_2024_compatibility = { level = "warn", priority = -1 }
 let_underscore = { level = "warn", priority = -1 }
-nonstandard_style = { level = "warn", priority = -1 }
 unused = { level = "warn", priority = -1 }
 missing_debug_implementations = "warn"
 missing_copy_implementations = "warn"
@@ -19,7 +18,6 @@ unused_import_braces = "warn"
 unused_lifetimes = "warn"
 unused_qualifications = "warn"
 variant_size_differences = "warn"
-elided_lifetimes_in_paths = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -43,7 +41,6 @@ empty_structs_with_brackets = "warn"
 exhaustive_enums = "warn"
 exhaustive_structs = "warn"
 expect_used = "warn"
-filter_map_bool_then = "warn"
 filter_map_next = "warn"
 get_unwrap = "warn"
 if_not_else = "warn"
@@ -81,7 +78,6 @@ needless_pass_by_ref_mut = "warn"
 needless_raw_strings = "warn"
 needless_type_cast = "warn"
 nonminimal_bool = "warn"
-nonstandard_macro_braces = "warn"
 option_as_ref_cloned = "warn"
 option_if_let_else = "warn"
 overly_complex_bool_expr = "warn"
@@ -153,7 +149,4 @@ zero_sized_map_values = "warn"
 
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
-private_intra_doc_links = "warn"
-invalid_codeblock_attributes = "warn"
-bare_urls = "warn"
 unescaped_backticks = "warn"

@@ -4,15 +4,10 @@ on:
   workflow_call:
     inputs:
       ref:
-        required: false
         type: string
-        default: ""
       version:
-        required: false
         type: string
-        default: ""
       snapshot:
-        required: false
         type: boolean
         default: true
 
@@ -23,15 +18,10 @@ defaults:
   run:
     working-directory: workspace/mux-core
 
-env:
-  GORELEASER_CURRENT_TAG: ${{ inputs.version && format('v{0}', inputs.version) || '' }}
-
 jobs:
-  linux-windows:
-    name: Build Linux and Windows
+  build:
+    name: Build library
     runs-on: ubuntu-latest
-    env:
-      BUILD_PLATFORM: linux-windows
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -43,108 +33,46 @@ jobs:
 
       - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu,x86_64-pc-windows-gnu,aarch64-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
-          components: rust-src
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: workspace/mux-core -> target
-          shared-key: ${{ github.event.repository.name }}-cargo
-          cache-on-failure: true
-
-      - name: Read release metadata
-        run: node scripts/release-metadata.js
-
-      - name: Install mingw-w64
-        if: env.RELEASE_BINARIES != '[]'
-        run: sudo apt-get update && sudo apt-get install -y mingw-w64
-
-      - name: Set up Zig
-        if: env.RELEASE_BINARIES != '[]'
-        uses: mlugg/setup-zig@v2
-
-      - name: Install cargo-zigbuild
-        if: env.RELEASE_BINARIES != '[]'
+      - name: Install cargo-edit
+        if: ${{ !inputs.snapshot }}
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-zigbuild
+          tool: cargo-edit
 
-      - name: Ensure build script is executable
-        if: env.RELEASE_BINARIES != '[]'
-        run: chmod +x scripts/cargo-or-zigbuild.js
-
-      - name: Install GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          install-only: true
-
-      - name: Package archives
-        run: ${{ inputs.snapshot && 'make release-snapshot' || 'make release' }}
+      - name: Sync workspace version
+        if: ${{ !inputs.snapshot }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ github.event.repository.name }}-linux-windows-builds
-          path: |
-            workspace/mux-core/dist/*.tar.gz
-            workspace/mux-core/dist/*.zip
-          retention-days: ${{ inputs.snapshot && 7 || 30 }}
-
-  macos:
-    name: Build macOS
-    runs-on: macos-latest
-    env:
-      BUILD_PLATFORM: macos
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-          path: workspace/mux-core
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
+          VERSION: ${{ inputs.version }}
+        run: cargo set-version --workspace "$VERSION"
 
       - name: Set up Rust
+        if: ${{ inputs.version == '' }}
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
+        if: ${{ inputs.version == '' }}
         with:
           workspaces: workspace/mux-core -> target
           shared-key: ${{ github.event.repository.name }}-cargo
           cache-on-failure: true
 
-      - name: Read release metadata
-        run: node scripts/release-metadata.js
+      - name: Build library
+        if: ${{ inputs.version == '' }}
+        run: make build
 
-      - name: Install GoReleaser
-        if: env.RELEASE_BINARIES != '[]'
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          install-only: true
-
-      - name: Package archives
-        if: env.RELEASE_BINARIES != '[]'
-        run: ${{ inputs.snapshot && 'make release-snapshot' || 'make release' }}
+      - name: Package source archive
+        if: ${{ inputs.version != '' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          RELEASE_TARGET: ${{ inputs.snapshot && 'release-snapshot' || 'release' }}
+        run: make "$RELEASE_TARGET"
 
-      - name: Upload artifacts
-        if: env.RELEASE_BINARIES != '[]'
+      - name: Upload source archive
+        if: ${{ inputs.version != '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event.repository.name }}-macos-builds
-          path: workspace/mux-core/dist/*_darwin_*.tar.gz
+          name: ${{ github.event.repository.name }}-library-builds
+          path: workspace/mux-core/dist/*.tar.gz
+          compression-level: 0
+          if-no-files-found: error
           retention-days: ${{ inputs.snapshot && 7 || 30 }}

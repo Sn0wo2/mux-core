@@ -1,16 +1,5 @@
 [graph]
 all-features = true
 
-[advisories]
-ignore = []
-
 [licenses]
 allow = ["Apache-2.0", "MIT", "Unicode-3.0", "Unlicense", "Zlib", "0BSD", "ISC"]
-
-[bans]
-multiple-versions = "warn"
-wildcards = "allow"
-
-[sources]
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []

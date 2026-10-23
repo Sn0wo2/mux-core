@@ -15,9 +15,3 @@ runs:
         ref: d13179d08ccee42457c0fef79a424896351b982e
         path: workspace/mux-cool-rs
         persist-credentials: false
-    - uses: actions/checkout@v7
-      with:
-        repository: Sn0wo2/socksaddr
-        ref: c1fe01566d842937a2776731d649bc0ccc87d648
-        path: workspace/socksaddr
-        persist-credentials: false
