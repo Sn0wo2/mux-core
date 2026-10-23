@@ -263,13 +263,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.tag.outputs.sha || needs.prepare.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: workspace/mux-core
+
+      - name: Generate changelog
+        uses: goreleaser/goreleaser-action@v7
+        env:
+          GORELEASER_CURRENT_TAG: v${{ needs.prepare.outputs.version }}
+        with:
+          workdir: workspace/mux-core
+          args: release --clean --skip=publish
+
       - uses: softprops/action-gh-release@v3
         id: release
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           draft: true
           prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
-          generate_release_notes: true
+          body_path: workspace/mux-core/dist/CHANGELOG.md
 
       - uses: actions/github-script@v9
         env:

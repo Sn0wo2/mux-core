@@ -1,0 +1,17 @@
+version: 2
+project_name: mux-core
+
+builds:
+  - skip: true
+
+archives:
+  - formats: [none]
+
+source:
+  enabled: false
+
+checksum:
+  disable: true
+
+changelog:
+  sort: asc
