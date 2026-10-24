@@ -10,8 +10,8 @@ repository = "https://github.com/Sn0wo2/mux-core"
 [dependencies]
 async_smux = "0.4.0"
 futures-util = "0.3"
-h2mux-rs = { version = "0.0.1", path = "../h2mux-rs" }
-mux-cool-rs = { version = "0.0.1", path = "../mux-cool-rs" }
+h2mux-rs = "0.0.2"
+mux-cool-rs = "0.0.4"
 socksaddr = "0.0.4"
 tokio = { version = "1", features = ["io-util", "sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
