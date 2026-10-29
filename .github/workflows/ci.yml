@@ -96,6 +96,8 @@ jobs:
         run: git apply --include='*.rs' "$RUNNER_TEMP/lint-fixes.patch"
 
       - name: Create autofix pull request
+        id: autofix_pr
+        continue-on-error: true
         if: ${{ !cancelled() && steps.apply_fix.outcome == 'success' }}
         uses: peter-evans/create-pull-request@v8
         with:
@@ -107,6 +109,15 @@ jobs:
           body: "Automated rustfmt and Clippy fixes from CI"
           labels: automated,rust
           add-paths: "**/*.rs"
+
+      - name: Upload lint fixes if pull request creation fails
+        if: ${{ !cancelled() && steps.autofix_pr.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-fixes
+          path: ${{ runner.temp }}/lint-fixes.patch
+          if-no-files-found: error
+          retention-days: 7
 
   geiger:
     name: Unsafe code report
@@ -136,7 +147,9 @@ jobs:
         with:
           tool: cargo-geiger
 
-      - run: cargo +nightly geiger --all-features --output-format GitHubMarkdown >> "$GITHUB_STEP_SUMMARY"
+      - name: Scan unsafe code
+        continue-on-error: true
+        run: cargo +nightly geiger --all-features --output-format GitHubMarkdown >> "$GITHUB_STEP_SUMMARY"
 
   semver:
     name: Semantic versioning
