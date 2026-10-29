@@ -7,3 +7,5 @@ mutants.out*/
 rustc-ice-*.txt
 .idea/
 .vscode/
+node_modules/
+.zig-cache/
