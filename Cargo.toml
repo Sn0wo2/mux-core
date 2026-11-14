@@ -2,7 +2,7 @@
 name = "mux-core"
 description = "Transport-independent multiplexed session middleware"
 readme = "README.md"
-version = "0.0.1"
+version = "0.0.3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Sn0wo2/mux-core"
