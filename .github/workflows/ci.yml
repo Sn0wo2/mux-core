@@ -16,9 +16,6 @@ jobs:
   check:
     name: Checks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/mux-core
     permissions:
       contents: write
       pull-requests: write
@@ -27,10 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          path: workspace/mux-core
           persist-credentials: false
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -38,7 +32,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: workspace/mux-core -> target
           shared-key: check
           cache-workspace-crates: true
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -73,11 +66,7 @@ jobs:
           cargo test-no-default
           cargo doc-all
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-
-      - run: cargo deny check
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
       - name: Checkout the branch for autofix
         id: autofix_checkout
@@ -87,7 +76,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.head_ref || github.ref_name }}
-          path: workspace/mux-core
           persist-credentials: false
 
       - name: Apply lint fixes
@@ -119,28 +107,39 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - run: cargo audit
+
   geiger:
     name: Unsafe code report
     runs-on: ubuntu-latest
     continue-on-error: true
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: workspace/mux-core
     steps:
       - uses: actions/checkout@v7
         with:
-          path: workspace/mux-core
           persist-credentials: false
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
 
       - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: workspace/mux-core -> target
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - uses: taiki-e/install-action@v2
@@ -163,11 +162,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          path: workspace/mux-core
           persist-credentials: false
 
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
-
       - uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          manifest-path: workspace/mux-core/Cargo.toml

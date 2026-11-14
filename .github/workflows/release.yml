@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*"]
   workflow_dispatch:
     inputs:
       version:
@@ -25,9 +25,6 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/mux-core
     permissions:
       contents: write
       checks: read
@@ -42,10 +39,7 @@ jobs:
         with:
           ref: ${{ (github.event_name == 'push' || inputs.snapshot) && github.ref || github.event.repository.default_branch }}
           fetch-depth: 0
-          path: workspace/mux-core
           persist-credentials: false
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
 
       - name: Normalize version
         id: version
@@ -86,7 +80,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.release.outputs.skip != 'true'
         with:
-          workspaces: workspace/mux-core -> target
           shared-key: check
           cache-workspace-crates: true
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -113,8 +106,24 @@ jobs:
           VERIFY_VERSION: ${{ !inputs.snapshot }}
           VERSION: ${{ steps.version.outputs.version }}
 
+      - name: Detect reusable CI checks
+        id: ci
+        if: >-
+          github.event_name == 'push' && steps.release.outputs.skip != 'true' &&
+          steps.sync.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=Checks" --jq '.total_count')" -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Reuse CI checks for this commit
-        if: github.event_name == 'push' && steps.release.outputs.skip != 'true' && steps.sync.outputs.changed != 'true'
+        if: >-
+          github.event_name == 'push' && steps.release.outputs.skip != 'true' &&
+          steps.sync.outputs.changed != 'true' && steps.ci.outputs.found == 'true'
         timeout-minutes: 15
         uses: lewagon/wait-on-check-action@v1.9.1
         with:
@@ -124,7 +133,10 @@ jobs:
           allowed-conclusions: success
 
       - name: Check the release candidate
-        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
+        if: >-
+          steps.release.outputs.skip != 'true' &&
+          (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true' ||
+          steps.ci.outputs.found != 'true')
         run: |
           cargo fmt-check
           cargo lint
@@ -135,14 +147,11 @@ jobs:
           cargo test-no-default
           cargo doc-all
 
-      - uses: taiki-e/install-action@v2
-        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
-        with:
-          tool: cargo-deny
-
-      - name: Check release candidate dependencies
-        if: steps.release.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true')
-        run: cargo deny check
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        if: >-
+          steps.release.outputs.skip != 'true' &&
+          (github.event_name == 'workflow_dispatch' || steps.sync.outputs.changed == 'true' ||
+          steps.ci.outputs.found != 'true')
 
       - name: Commit and publish the checked version
         id: commit
@@ -155,7 +164,34 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -u -- '*Cargo.toml' Cargo.lock
           if git diff --cached --quiet && git show-ref --verify --quiet "refs/tags/v$VERSION"; then
-            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            release_sha=$(git rev-parse HEAD)
+            if [ "$(git rev-parse "refs/tags/v$VERSION^{commit}")" != "$release_sha" ]; then
+              echo "Tag v$VERSION does not point to HEAD" >&2
+              exit 1
+            fi
+            remote_sha=$(git -c credential.helper='!gh auth git-credential' ls-remote --refs origin "refs/tags/v$VERSION" | cut -f1)
+            if [ -n "$remote_sha" ] && [ "$remote_sha" != "$(git rev-parse "refs/tags/v$VERSION")" ]; then
+              echo "Remote tag v$VERSION differs from the local tag" >&2
+              exit 1
+            fi
+            git -c credential.helper='!gh auth git-credential' fetch --no-tags origin "$DEFAULT_BRANCH"
+            if git merge-base --is-ancestor "$release_sha" FETCH_HEAD; then
+              ancestry=0
+            else
+              ancestry=$?
+            fi
+            if [ "$ancestry" -ne 0 ] && [ "$ancestry" -ne 1 ]; then
+              echo "Could not check remote branch ancestry" >&2
+              exit 1
+            fi
+            refs=()
+            if [ "$ancestry" -eq 1 ]; then refs+=("HEAD:refs/heads/$DEFAULT_BRANCH"); fi
+            if [ -z "$remote_sha" ]; then refs+=("refs/tags/v$VERSION:refs/tags/v$VERSION"); fi
+            if [ "${#refs[@]}" -gt 0 ]; then
+              git -c credential.helper='!gh auth git-credential' push --atomic origin "${refs[@]}"
+            fi
+            echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+            echo "Tag v$VERSION already points at the checked version; nothing to commit."
             exit 0
           fi
           git diff --cached --quiet || git commit -m "chore(release): bump version to $VERSION"
@@ -177,9 +213,6 @@ jobs:
       !cancelled() && !inputs.snapshot && needs.prepare.result == 'success' &&
       needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/mux-core
     permissions:
       contents: write
     steps:
@@ -187,10 +220,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-          path: workspace/mux-core
           persist-credentials: false
-
-      - uses: ./workspace/mux-core/.github/actions/setup-path-dependencies
 
       - uses: dtolnay/rust-toolchain@stable
         if: needs.prepare.outputs.has_publishable_crates == 'true'
@@ -198,7 +228,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: needs.prepare.outputs.has_publishable_crates == 'true'
         with:
-          workspaces: workspace/mux-core -> target
           shared-key: check
           cache-workspace-crates: true
           save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
@@ -206,13 +235,11 @@ jobs:
       - uses: katyo/publish-crates@v2
         if: needs.prepare.outputs.has_publishable_crates == 'true'
         with:
-          path: workspace/mux-core
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           args: --allow-dirty
 
       - uses: goreleaser/goreleaser-action@v7
         with:
-          workdir: workspace/mux-core
           args: release --clean --skip=before,archive,validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

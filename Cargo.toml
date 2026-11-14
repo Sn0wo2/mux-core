@@ -163,10 +163,10 @@ unescaped_backticks = "warn"
 [dependencies]
 async_smux = "0.4.0"
 futures-util = "0.3"
-h2mux-rs = "0.0.2"
-mux-cool-rs = "0.0.4"
-socksaddr = "0.0.4"
-tokio = { version = "1", features = ["io-util", "sync"] }
+h2mux-rs = "0.0.4"
+mux-cool-rs = "0.0.6"
+socksaddr = "0.0.5"
+tokio = { version = "1", features = ["io-util", "macros", "sync"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 tracing = "0.1"
 yamux = "0.14.1"
